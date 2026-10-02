@@ -24,9 +24,11 @@ import re
 import sqlite3
 import sys
 import time
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -66,6 +68,8 @@ DEFAULT_CONFIG = {
     "report_path": "report.html",
     "db_path": "divar_rent.db",
     "telegram": {"bot_token": "", "chat_id": "", "max_photos": 4},
+    "timezone": "Asia/Tehran",
+    "schedule": {"interval_minutes": 60, "quiet_hours": ["00:00", "10:00"]},
 }
 
 # ------------------------------------------------------------------ متن و عدد
@@ -634,7 +638,7 @@ def render(groups: list[tuple[dict, list[dict], bool, bool]], cfg: dict, stats: 
     if not groups:
         body = "<p>آگهی‌ای با این فیلترها پیدا نشد. فیلترهای آدرس جست‌وجو یا بخش filters در config.json را بازتر کن.</p>"
     sub = (f"{fa_digits(stats['houses'])} خانه از {fa_digits(stats['posts'])} آگهی "
-           f"(به‌روزرسانی {fa_digits(datetime.now().strftime('%H:%M'))}). "
+           f"(به‌روزرسانی {fa_digits(datetime.now(ZoneInfo(cfg['timezone'])).strftime('%H:%M'))}). "
            f"هزینه‌ی معادل = اجاره + {rate}٪ ودیعه در ماه.")
     return (f'<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>خانه‌های اجاره‌ای</title>'
@@ -666,11 +670,11 @@ def to_jpeg(data: bytes | None) -> bytes | None:
         return None
 
 
-def telegram(cfg: dict, text: str, photos: list[bytes] = ()):
-    """پیام را می‌فرستد؛ اگر عکس باشد به‌صورت آلبوم و متن به‌عنوان توضیح عکس اول."""
+def telegram(cfg: dict, text: str, photos: list[bytes] = ()) -> bool:
+    """پیام را می‌فرستد؛ اگر عکس باشد به‌صورت آلبوم و متن به‌عنوان توضیح عکس اول. True یعنی رسید."""
     tg = cfg.get("telegram") or {}
     if not tg.get("bot_token") or not tg.get("chat_id"):
-        return
+        return False
     if len(photos) > 1:
         media = [{"type": "photo", "media": f"attach://p{i}"} for i in range(len(photos))]
         media[0].update(caption=text, parse_mode="HTML")
@@ -690,13 +694,22 @@ def telegram(cfg: dict, text: str, photos: list[bytes] = ()):
             time.sleep(((r.json().get("parameters") or {}).get("retry_after") or 5) + 1)
         if not r.ok:  # مثلاً توکن یا chat_id اشتباه
             print(f"  ! تلگرام پیام را نپذیرفت: HTTP {r.status_code} {r.text[:200]}")
-            if photos:
-                telegram(cfg, text)  # دست‌کم متن اعلان برسد
+            return bool(photos) and telegram(cfg, text)  # دست‌کم متن اعلان برسد
+        return True
     except requests.RequestException as e:
         # متن خطا آدرس درخواست را دارد؛ توکن نباید در لاگ بماند
         print(f"  ! ارسال تلگرام ناموفق بود: {str(e).replace(tg['bot_token'], '***')}")
-        if photos:
-            telegram(cfg, text)
+        return bool(photos) and telegram(cfg, text)
+
+
+def send_alert(cfg: dict, dv: Divar, reason: str, best: dict, n: int) -> bool:
+    tg = cfg["telegram"]
+    if not tg.get("bot_token") or not tg.get("chat_id"):
+        return False
+    # آگهی‌هایی که قبل از اضافه شدن photos ذخیره شده‌اند فقط عکس کوچک دارند
+    urls = (best.get("photos") or best["images"])[:min(int(tg.get("max_photos") or 0), 10)]
+    photos = [p for p in (to_jpeg(dv.image(u)) for u in urls) if p]
+    return telegram(cfg, alert_text(reason, best, n), photos)
 
 
 # ------------------------------------------------------------------ اجرای اصلی
@@ -782,13 +795,8 @@ def run(cfg: dict):
     if first_run:
         print("اجرای اول بود؛ برای جلوگیری از سیل پیام، اعلان تلگرام از اجرای بعدی فرستاده می‌شود.")
         return
-    tg = cfg["telegram"]
-    max_photos = min(int(tg.get("max_photos") or 0), 10) if tg.get("bot_token") and tg.get("chat_id") else 0
     for reason, best, n in alerts:
-        # آگهی‌هایی که قبل از اضافه شدن photos ذخیره شده‌اند فقط عکس کوچک دارند
-        urls = (best.get("photos") or best["images"])[:max_photos]
-        photos = [p for p in (to_jpeg(dv.image(u)) for u in urls) if p]
-        telegram(cfg, alert_text(reason, best, n), photos)
+        send_alert(cfg, dv, reason, best, n)
     print(f"{len(alerts)} اعلان.")
 
 
@@ -813,22 +821,82 @@ def load_config(path: str) -> dict:
     return cfg
 
 
+def _minutes(hhmm) -> int:
+    h, _, m = str(hhmm).partition(":")
+    return int(h) * 60 + int(m or 0)
+
+
+def should_run(cfg: dict) -> tuple[bool, str]:
+    """اجرای زمان‌بندی‌شده: بیرون از ساعت سکوت و دست‌کم interval_minutes بعد از اجرای قبلی."""
+    sch = cfg["schedule"]
+    now = datetime.now(ZoneInfo(cfg["timezone"]))
+    quiet = sch.get("quiet_hours")
+    if quiet:
+        start, end, m = _minutes(quiet[0]), _minutes(quiet[1]), now.hour * 60 + now.minute
+        if (start <= m < end) if start <= end else (m >= start or m < end):
+            return False, f"ساعت سکوت است ({quiet[0]} تا {quiet[1]})"
+    db_path = Path(cfg["db_path"])
+    if db_path.exists():
+        with closing(sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            last = db.execute("SELECT MAX(at) FROM runs").fetchone()[0]
+        if last:
+            # زمان‌بندی گیت‌هاب چند دقیقه جابه‌جا می‌شود؛ کمی زودتر هم قبول است
+            interval = sch["interval_minutes"]
+            ago = (time.time() - last) / 60
+            if ago < interval - min(5, interval / 4):
+                return False, f"اجرای قبلی {fa_digits(int(ago))} دقیقه پیش بود (فاصله: {fa_digits(interval)} دقیقه)"
+    return True, ""
+
+
+def send_test(cfg: dict):
+    """یک آگهی واقعی از اولین جست‌وجو را با قالب اعلان‌ها به تلگرام می‌فرستد؛ به دیتابیس دست نمی‌زند."""
+    tg = cfg["telegram"]
+    if not tg.get("bot_token") or not tg.get("chat_id"):
+        sys.exit("توکن یا chat_id تلگرام تنظیم نشده است.")
+    dv = Divar(cfg["request_interval_seconds"])
+    body, _ = url_to_body(cfg["search_urls"][0])
+    for row in iter_search(dv, body, 1):
+        info = row_info(row)
+        if not info["token"]:
+            continue
+        l = build_listing(info, parse_detail(dv.detail(info["token"])))
+        l["cost"] = monthly_cost(l, cfg["conversion_rate_monthly"])
+        if l["cost"] and l["cost"] >= cfg["min_plausible_monthly_cost"]:
+            break
+    else:
+        sys.exit("آگهی‌ای برای پیام تست پیدا نشد.")
+    if not send_alert(cfg, dv, "پیام تست", l, 1):
+        sys.exit("پیام تست فرستاده نشد.")
+    print(f"پیام تست فرستاده شد: {l['url']}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="کرال آگهی‌های اجاره دیوار با حذف تکراری‌ها")
     ap.add_argument("--config", default="config.json")
-    ap.add_argument("--loop", type=float, default=0, help="هر چند دقیقه یک بار اجرا شود (۰ = یک بار)")
+    ap.add_argument("--scheduled", action="store_true",
+                    help="فقط اگر طبق schedule در config وقتش باشد اجرا کن (برای cron و GitHub Actions)")
+    ap.add_argument("--loop", nargs="?", type=float, const=0, default=None,
+                    help="مدام طبق schedule اجرا کن؛ عدد اختیاری interval_minutes را عوض می‌کند")
+    ap.add_argument("--test-telegram", action="store_true", help="فقط یک پیام نمونه به تلگرام بفرست")
     args = ap.parse_args()
     cfg = load_config(args.config)
+    if args.test_telegram:
+        return send_test(cfg)
+    if args.loop is None:
+        ok, why = should_run(cfg) if args.scheduled else (True, "")
+        if not ok:
+            print(f"اجرا نشد: {why}")
+            return
+        return run(cfg)
+    if args.loop:
+        cfg["schedule"]["interval_minutes"] = args.loop
     while True:
-        try:
-            run(cfg)
-        except Exception as e:
-            print(f"خطا: {e}")
-            if not args.loop:
-                raise
-        if not args.loop:
-            break
-        time.sleep(args.loop * 60)
+        if should_run(cfg)[0]:
+            try:
+                run(cfg)
+            except Exception as e:
+                print(f"خطا: {e}")
+        time.sleep(60)
 
 
 if __name__ == "__main__":

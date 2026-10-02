@@ -6,6 +6,11 @@
   "request_interval_seconds": 2,
   "conversion_rate_monthly": 0.03,
   "detail_refresh_hours": 168,
+  "timezone": "Asia/Tehran",
+  "schedule": {
+    "interval_minutes": 60,
+    "quiet_hours": ["00:00", "10:00"]
+  },
   "filters": {
     "max_deposit": null,
     "max_rent": null,

@@ -7,9 +7,11 @@
 ## راه‌اندازی
 
 ```
-pip install requests pillow
-python divar_rent.py              # یک بار
-python divar_rent.py --loop 30    # هر ۳۰ دقیقه
+pip install -r requirements.txt
+python divar_rent.py                  # همین الان یک بار
+python divar_rent.py --scheduled      # فقط اگر طبق schedule وقتش باشد (برای cron)
+python divar_rent.py --loop           # مدام، طبق schedule
+python divar_rent.py --test-telegram  # فقط یک پیام نمونه به تلگرام
 ```
 
 بعد `report.html` را در مرورگر باز کن.
@@ -32,6 +34,9 @@ python divar_rent.py --loop 30    # هر ۳۰ دقیقه
 | `exclude_terms` | آگهی‌هایی که این کلمه‌ها را دارند حذف می‌شوند. |
 | `exclude_agencies` | `true` یعنی فقط آگهی‌های شخصی. |
 | `min_plausible_monthly_cost` | قیمت‌های کمتر از این (مثلاً «۱ تومان» برای جلب توجه) غیرواقعی حساب می‌شوند و ارزان‌ترین انتخاب نمی‌شوند. |
+| `schedule.interval_minutes` | فاصله‌ی بین اجراهای زمان‌بندی‌شده (`--scheduled` و `--loop`). روی GitHub Actions کمتر از ۱۵ دقیقه اثری ندارد. |
+| `schedule.quiet_hours` | بازه‌ای که اجرا نمی‌شود، مثلاً `["00:00", "10:00"]`. بازه‌ی رد شونده از نیمه‌شب هم می‌شود (`["23:00", "07:00"]`). `null` یعنی بدون ساعت سکوت. |
+| `timezone` | منطقه‌ی زمانی ساعت سکوت و ساعت گزارش. |
 
 ## تشخیص تکراری
 
@@ -58,12 +63,16 @@ python divar_rent.py --loop 30    # هر ۳۰ دقیقه
 
 ## اجرا روی GitHub Actions (رایگان)
 
-`.github/workflows/crawl.yml` اسکریپت را هر ۳۰ دقیقه روی سرورهای گیت‌هاب اجرا می‌کند.
+`.github/workflows/crawl.yml` هر ۱۵ دقیقه بیدار می‌شود و اسکریپت را با `--scheduled` اجرا می‌کند؛
+خود اسکریپت طبق `schedule` در `config.json` تصمیم می‌گیرد اجرا کند یا نه. پس برای عوض کردن
+فاصله یا ساعت سکوت فقط `config.json` را تغییر بده.
 ریپازیتوری باید public باشد تا دقیقه‌های Actions محدودیت نداشته باشد.
 
 1. در Settings → Secrets and variables → Actions دو secret بساز:
    `TELEGRAM_BOT_TOKEN` و `TELEGRAM_CHAT_ID`. توکن را هرگز در `config.json` نگذار.
-2. از تب Actions، workflow «crawl» را با Run workflow یک بار دستی اجرا کن.
+2. از تب Actions، workflow «crawl» را با Run workflow اجرا کن. اجرای دستی ساعت سکوت را
+   نادیده می‌گیرد. اگر تیک «فقط پیام تست به تلگرام» را بزنی، فقط یک آگهی نمونه به تلگرام می‌رود
+   و به دیتابیس دست زده نمی‌شود.
 
 دیتابیس و `report.html` بعد از هر اجرا در شاخه‌ی `data` ذخیره می‌شوند و اجرای بعدی از همان‌جا
 ادامه می‌دهد. اگر شاخه‌ی `data` نباشد، اجرای بعدی فقط پایه را ثبت می‌کند و پیامی نمی‌فرستد.

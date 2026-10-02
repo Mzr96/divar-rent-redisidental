@@ -2,8 +2,13 @@ name: crawl
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
+    inputs:
+      test_telegram:
+        description: "فقط پیام تست به تلگرام"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -23,6 +28,7 @@ jobs:
         run: |
           if git fetch --depth=1 origin data; then
             git checkout FETCH_HEAD -- divar_rent.db
+            sha256sum divar_rent.db > /tmp/db.sha
           else
             echo "No data branch yet: this run records the baseline and sends no alerts."
           fi
@@ -38,12 +44,25 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python divar_rent.py
+          EVENT: ${{ github.event_name }}
+          TEST_TELEGRAM: ${{ inputs.test_telegram }}
+        run: |
+          if [ "$TEST_TELEGRAM" = "true" ]; then
+            python divar_rent.py --test-telegram
+          elif [ "$EVENT" = "schedule" ]; then
+            python divar_rent.py --scheduled
+          else
+            python divar_rent.py
+          fi
 
       - name: Save database to the data branch
         if: always()
         run: |
           [ -f divar_rent.db ] || exit 0
+          if [ -f /tmp/db.sha ] && sha256sum -c --status /tmp/db.sha; then
+            echo "Database unchanged; nothing to save."
+            exit 0
+          fi
           mkdir -p /tmp/data
           cp divar_rent.db /tmp/data/
           [ -f report.html ] && cp report.html /tmp/data/
