@@ -1,0 +1,27 @@
+{
+  "search_urls": [
+    "https://divar.ir/s/tehran/rent-residential?districts=68%2C67%2C86%2C940%2C71%2C1028%2C72%2C941%2C70%2C74&credit=-3000000000&rent=-100000000"
+  ],
+  "max_pages": 100,
+  "request_interval_seconds": 2,
+  "conversion_rate_monthly": 0.03,
+  "detail_refresh_hours": 168,
+  "filters": {
+    "max_deposit": null,
+    "max_rent": null,
+    "max_monthly_cost": null,
+    "min_area": null,
+    "max_area": null,
+    "min_rooms": null
+  },
+  "exclude_terms": ["همخانه", "هم خانه", "خوابگاه"],
+  "exclude_agencies": false,
+  "min_plausible_monthly_cost": 1000000,
+  "report_path": "report.html",
+  "db_path": "divar_rent.db",
+  "telegram": {
+    "bot_token": "",
+    "chat_id": "",
+    "max_photos": 4
+  }
+}
