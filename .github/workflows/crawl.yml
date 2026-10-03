@@ -1,14 +1,19 @@
 name: crawl
+run-name: ${{ inputs.mode || github.event_name }}
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "7 * * * *"
   workflow_dispatch:
     inputs:
-      test_telegram:
-        description: "فقط پیام تست به تلگرام"
-        type: boolean
-        default: false
+      mode:
+        description: "run = اجرای کامل همین الان | test-telegram = فقط پیام تست | scheduled = طبق schedule در config"
+        type: choice
+        options:
+          - run
+          - test-telegram
+          - scheduled
+        default: run
 
 permissions:
   contents: write
@@ -44,16 +49,13 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          EVENT: ${{ github.event_name }}
-          TEST_TELEGRAM: ${{ inputs.test_telegram }}
+          MODE: ${{ inputs.mode || 'scheduled' }}
         run: |
-          if [ "$TEST_TELEGRAM" = "true" ]; then
-            python divar_rent.py --test-telegram
-          elif [ "$EVENT" = "schedule" ]; then
-            python divar_rent.py --scheduled
-          else
-            python divar_rent.py
-          fi
+          case "$MODE" in
+            test-telegram) python divar_rent.py --test-telegram ;;
+            run) python divar_rent.py ;;
+            *) python divar_rent.py --scheduled ;;
+          esac
 
       - name: Save database to the data branch
         if: always()

@@ -63,16 +63,35 @@ python divar_rent.py --test-telegram  # فقط یک پیام نمونه به ت�
 
 ## اجرا روی GitHub Actions (رایگان)
 
-`.github/workflows/crawl.yml` هر ۱۵ دقیقه بیدار می‌شود و اسکریپت را با `--scheduled` اجرا می‌کند؛
-خود اسکریپت طبق `schedule` در `config.json` تصمیم می‌گیرد اجرا کند یا نه. پس برای عوض کردن
-فاصله یا ساعت سکوت فقط `config.json` را تغییر بده.
-ریپازیتوری باید public باشد تا دقیقه‌های Actions محدودیت نداشته باشد.
+`.github/workflows/crawl.yml` اسکریپت را با `--scheduled` اجرا می‌کند و خود اسکریپت طبق `schedule`
+در `config.json` تصمیم می‌گیرد اجرا کند یا نه. پس برای عوض کردن فاصله یا ساعت سکوت فقط
+`config.json` را تغییر بده. ریپازیتوری باید public باشد تا دقیقه‌های Actions محدودیت نداشته باشد.
 
 1. در Settings → Secrets and variables → Actions دو secret بساز:
    `TELEGRAM_BOT_TOKEN` و `TELEGRAM_CHAT_ID`. توکن را هرگز در `config.json` نگذار.
-2. از تب Actions، workflow «crawl» را با Run workflow اجرا کن. اجرای دستی ساعت سکوت را
-   نادیده می‌گیرد. اگر تیک «فقط پیام تست به تلگرام» را بزنی، فقط یک آگهی نمونه به تلگرام می‌رود
-   و به دیتابیس دست زده نمی‌شود.
+2. از تب Actions، workflow «crawl» را با Run workflow اجرا کن و `mode` را انتخاب کن:
+   - `run`: اجرای کامل همین الان (ساعت سکوت را نادیده می‌گیرد)
+   - `test-telegram`: فقط یک آگهی نمونه به تلگرام؛ به دیتابیس دست نمی‌زند
+   - `scheduled`: مثل اجرای زمان‌بندی‌شده، طبق `schedule`
+
+### بیدار کردن منظم با cron-job.org
+
+زمان‌بندی خود گیت‌هاب (`schedule` در workflow) تضمینی نیست و گاهی ساعت‌ها اجرا نمی‌شود؛
+برای همین فقط ساعتی یک بار و به‌عنوان پشتیبان مانده است. بیدار کردن اصلی با یک سرویس cron
+رایگان بیرونی است که هر ۱۵ دقیقه workflow را با `mode=scheduled` صدا می‌زند:
+
+1. در GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+   یک توکن بساز: فقط همین ریپازیتوری، و فقط دسترسی **Actions: Read and write**.
+2. در cron-job.org یک cronjob بساز:
+   - URL: `https://api.github.com/repos/<user>/<repo>/actions/workflows/crawl.yml/dispatches`
+   - زمان‌بندی: هر ۱۵ دقیقه
+   - Request method: `POST`
+   - Headers: `Authorization: Bearer <توکن>`، `Accept: application/vnd.github+json`،
+     `Content-Type: application/json`
+   - Body: `{"ref": "main", "inputs": {"mode": "scheduled"}}`
+
+اگر هر دو (cron-job.org و زمان‌بندی گیت‌هاب) هم‌زمان صدا بزنند، دومی می‌بیند اجرای قبلی تازه بوده
+و کاری نمی‌کند.
 
 دیتابیس و `report.html` بعد از هر اجرا در شاخه‌ی `data` ذخیره می‌شوند و اجرای بعدی از همان‌جا
 ادامه می‌دهد. اگر شاخه‌ی `data` نباشد، اجرای بعدی فقط پایه را ثبت می‌کند و پیامی نمی‌فرستد.
